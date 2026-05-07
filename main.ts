@@ -87,6 +87,7 @@ interface Conversation {
   id: string;
   title: string;
   messages: ChatMessage[];
+  summary?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -280,7 +281,7 @@ class VaultAiChatView extends ItemView {
 
     const toolbar = composer.createDiv("vault-ai-chat__toolbar");
     toolbar.createEl("span", {
-      text: "Uses active note + relevant vault notes"
+      text: "Mention \"active note\" to include it · relevant vault notes always searched"
     });
     this.sendButton = toolbar.createEl("button", {
       text: "Send",
@@ -376,8 +377,9 @@ class VaultAiChatView extends ItemView {
     try {
       await this.mcpManager.waitForReady();
       const sources = await this.search.findRelevantNotes(content, this.plugin.settings.maxContextNotes);
-      const activeNote = await this.getActiveNoteContext();
+      const activeNote = mentionsActiveNote(content) ? await this.getActiveNoteContext() : "No active note context requested.";
       const client = new AiClient(this.plugin.settings);
+      await this.summarizeIfNeeded(conversation, client);
       const mcpToolDefs = this.mcpManager.getToolDefinitions();
       const isBootstrap = this.activeConversationId === this.bootstrapConversationId;
       const mergedTools = [
@@ -391,7 +393,7 @@ class VaultAiChatView extends ItemView {
       const response = await client.complete([
         {
           role: "system",
-          content: this.buildSystemPrompt(activeNote, sources)
+          content: this.buildSystemPrompt(activeNote, sources, conversation.summary)
         },
         ...this.toProviderMessages(conversation)
       ], { toolDefs: mergedTools });
@@ -443,7 +445,7 @@ class VaultAiChatView extends ItemView {
       current = await client.complete([
         {
           role: "system",
-          content: this.buildSystemPrompt(activeNote, sources)
+          content: this.buildSystemPrompt(activeNote, sources, conversation.summary)
         },
         ...this.toProviderMessages(conversation)
       ], { toolDefs });
@@ -462,6 +464,13 @@ class VaultAiChatView extends ItemView {
     this.messagesEl.empty();
     const conversation = this.activeConversation();
     const sourcePath = this.app.workspace.getActiveFile()?.path ?? "";
+
+    if (conversation.summary) {
+      this.messagesEl.createDiv("vault-ai-chat__summary-notice").createSpan({
+        text: "Earlier messages were summarized to preserve context."
+      });
+    }
+
     for (const message of conversation.messages) {
       if (message.role === "assistant" && !message.content?.trim()) continue;
       const el = this.messagesEl.createDiv(`vault-ai-chat__message vault-ai-chat__message--${message.role}`);
@@ -637,6 +646,50 @@ class VaultAiChatView extends ItemView {
     };
   }
 
+  private needsSummarization(conversation: Conversation): boolean {
+    if (conversation.messages.length <= 6) return false;
+    const totalChars = conversation.messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+    return conversation.messages.length > 20 || totalChars > 15000;
+  }
+
+  private async summarizeIfNeeded(conversation: Conversation, client: AiClient): Promise<void> {
+    if (!this.needsSummarization(conversation)) return;
+
+    const toSummarize = conversation.messages.slice(0, -6);
+    const recent = conversation.messages.slice(-6);
+
+    const transcript = toSummarize
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => `${m.role}: ${(m.content ?? "").trim()}`)
+      .join("\n");
+
+    if (!transcript.trim()) return;
+
+    try {
+      const response = await client.complete([
+        {
+          role: "system",
+          content: [
+            "Summarise the following conversation excerpt for use as context in continuing the conversation.",
+            "Capture: the main topics discussed, questions asked and answered, decisions made, key information exchanged, and any unresolved threads.",
+            "Be thorough but concise. Write in third person, past tense."
+          ].join(" ")
+        },
+        { role: "user", content: transcript }
+      ], { tools: false });
+
+      const summary = response.content?.trim();
+      if (!summary) return;
+
+      conversation.summary = conversation.summary
+        ? `${conversation.summary}\n\n${summary}`
+        : summary;
+      conversation.messages = recent;
+    } catch {
+      // Summarization is best-effort — continue without it if it fails.
+    }
+  }
+
   private setBusy(isBusy: boolean) {
     this.sendButton.disabled = isBusy;
     this.sendButton.setText(isBusy ? "Thinking..." : "Send");
@@ -654,7 +707,7 @@ class VaultAiChatView extends ItemView {
     return `Active note path: ${file.path}${selectionText}\n\n${truncate(content, 6000)}`;
   }
 
-  private buildSystemPrompt(activeNote: string, sources: SearchResult[]) {
+  private buildSystemPrompt(activeNote: string, sources: SearchResult[], summary?: string) {
     if (this.activeConversationId === this.bootstrapConversationId) {
       return `${SAFETY_PROMPT}\n\n${BOOTSTRAP_SYSTEM_PROMPT}`;
     }
@@ -686,6 +739,10 @@ class VaultAiChatView extends ItemView {
 
     if (this.personalizationContext.knowledge) {
       parts.push("", "---", this.personalizationContext.knowledge);
+    }
+
+    if (summary) {
+      parts.push("", "---", "Conversation history summary (earlier messages condensed):", summary);
     }
 
     parts.push(
@@ -1026,7 +1083,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("API key")
-      .setDesc("Stored locally in Obsidian plugin data.")
+      .setDesc("Stored in plain text in the plugin's data.json file inside your vault. Obsidian has no built-in secure key storage — do not store the vault in a shared or unencrypted location if this is a concern.")
       .addText((text) => {
         text
           .setPlaceholder("sk-...")
@@ -1626,6 +1683,12 @@ function defineTool(name: string, description: string, properties: Record<string
       }
     }
   };
+}
+
+function mentionsActiveNote(content: string): boolean {
+  return /\b(active|current|open|this)\s+note\b/i.test(content)
+    || /\bthe\s+note\b/i.test(content)
+    || /\bcurrent\s+file\b/i.test(content);
 }
 
 function tokenize(value: string) {

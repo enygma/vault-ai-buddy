@@ -181,6 +181,15 @@
   justify-content: space-between;
 }
 
+.vault-ai-chat__summary-notice {
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  text-align: center;
+}
+
 .vault-ai-chat__sources {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
