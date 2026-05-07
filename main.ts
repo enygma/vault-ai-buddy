@@ -27,6 +27,7 @@ interface VaultAiChatSettings {
   allowDeletes: boolean;
   allowedRoot: string;
   mcpServers: McpServerConfig[];
+  bootstrapComplete: boolean;
 }
 
 const DEFAULT_SETTINGS: VaultAiChatSettings = {
@@ -37,7 +38,8 @@ const DEFAULT_SETTINGS: VaultAiChatSettings = {
   requireConfirmation: true,
   allowDeletes: false,
   allowedRoot: "",
-  mcpServers: []
+  mcpServers: [],
+  bootstrapComplete: false
 };
 
 type ChatRole = "system" | "user" | "assistant" | "tool";
@@ -200,8 +202,10 @@ class VaultAiChatView extends ItemView {
   private readonly tools: VaultTools;
   private readonly mcpManager: McpManager;
   private conversations: Conversation[] = [];
-  private activeConversationId: string;
+  private activeConversationId!: string;
   private conversationCounter = 0;
+  private bootstrapConversationId: string | null = null;
+  private personalizationContext = { identity: "", knowledge: "" };
   private tabsEl: HTMLElement;
   private historyEl: HTMLElement;
   private mcpPanelEl: HTMLElement;
@@ -244,6 +248,7 @@ class VaultAiChatView extends ItemView {
     this.contentEl.addClass("vault-ai-chat");
     void this.mcpManager.initialize(this.plugin.settings.mcpServers);
     void this.mcpManager.waitForReady().then(() => this.renderMcpPanel());
+    void this.loadPersonalizationContext();
 
     const header = this.contentEl.createDiv("vault-ai-chat__header");
     const actions = header.createDiv("vault-ai-chat__actions");
@@ -291,7 +296,11 @@ class VaultAiChatView extends ItemView {
     });
 
     if (!this.conversations.length) {
-      this.startConversation();
+      if (!this.plugin.settings.bootstrapComplete) {
+        this.startBootstrap();
+      } else {
+        this.startConversation();
+      }
     } else {
       this.renderConversations();
       this.renderMessages();
@@ -314,6 +323,28 @@ class VaultAiChatView extends ItemView {
     this.conversations.unshift(conversation);
     this.activeConversationId = conversation.id;
     this.setDraft(seedMessage ?? "");
+    this.renderConversations();
+    this.renderMessages();
+  }
+
+  private startBootstrap() {
+    const now = Date.now();
+    const id = `conversation-${now}-bootstrap`;
+    const conversation: Conversation = {
+      id,
+      title: "Setup",
+      messages: [{
+        role: "assistant",
+        content: "Hi! Before we get started I'd like to learn a bit about you and your vault — this helps me be more useful in every future conversation.\n\n**To begin: who are you, what do you do, and what do you primarily use Obsidian for?**"
+      }],
+      createdAt: now,
+      updatedAt: now
+    };
+    this.conversationCounter += 1;
+    this.bootstrapConversationId = id;
+    this.conversations.unshift(conversation);
+    this.activeConversationId = id;
+    this.setDraft("");
     this.renderConversations();
     this.renderMessages();
   }
@@ -348,7 +379,12 @@ class VaultAiChatView extends ItemView {
       const activeNote = await this.getActiveNoteContext();
       const client = new AiClient(this.plugin.settings);
       const mcpToolDefs = this.mcpManager.getToolDefinitions();
-      const mergedTools = [...VAULT_TOOL_DEFINITIONS, ...mcpToolDefs];
+      const isBootstrap = this.activeConversationId === this.bootstrapConversationId;
+      const mergedTools = [
+        ...VAULT_TOOL_DEFINITIONS,
+        ...mcpToolDefs,
+        ...(isBootstrap ? [BOOTSTRAP_TOOL_DEFINITION] : [])
+      ];
       if (shouldGenerateTitle) {
         void this.generateConversationTitle(conversation, content, client);
       }
@@ -390,9 +426,11 @@ class VaultAiChatView extends ItemView {
       if (!toolCalls.length) return;
 
       for (const call of toolCalls) {
-        const result = VAULT_TOOL_NAMES.has(call.function.name)
-          ? await this.tools.run(call)
-          : await this.runMcpTool(call);
+        const result = call.function.name === "write_bootstrap_files"
+          ? await this.runBootstrapTool(call)
+          : VAULT_TOOL_NAMES.has(call.function.name)
+            ? await this.tools.run(call)
+            : await this.runMcpTool(call);
         conversation.messages.push({
           role: "tool",
           name: call.function.name,
@@ -556,6 +594,49 @@ class VaultAiChatView extends ItemView {
     return this.mcpManager.callTool(call.function.name, args);
   }
 
+  private async runBootstrapTool(call: ToolCall): Promise<string> {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+    } catch {
+      return "Tool arguments were not valid JSON.";
+    }
+    try {
+      const identityContent = requiredString(args.identity_content, "identity_content");
+      const knowledgeContent = requiredString(args.knowledge_content, "knowledge_content");
+      await this.writeVaultFile(IDENTITY_PATH, identityContent);
+      await this.writeVaultFile(KNOWLEDGE_PATH, knowledgeContent);
+      await this.loadPersonalizationContext();
+      this.bootstrapConversationId = null;
+      this.plugin.settings.bootstrapComplete = true;
+      await this.plugin.saveSettings();
+      new Notice("Setup complete! Your preferences have been saved to IDENTITY.md and KNOWLEDGE.md.");
+      return "Bootstrap complete. IDENTITY.md and KNOWLEDGE.md have been written to the vault root.";
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  private async writeVaultFile(path: string, content: string): Promise<void> {
+    const existing = this.plugin.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof TFile) {
+      await this.plugin.app.vault.modify(existing, content);
+    } else {
+      await this.plugin.app.vault.create(path, content);
+    }
+  }
+
+  private async loadPersonalizationContext(): Promise<void> {
+    const read = async (path: string): Promise<string> => {
+      const file = this.plugin.app.vault.getAbstractFileByPath(path);
+      return file instanceof TFile ? this.plugin.app.vault.cachedRead(file) : "";
+    };
+    this.personalizationContext = {
+      identity: await read(IDENTITY_PATH),
+      knowledge: await read(KNOWLEDGE_PATH)
+    };
+  }
+
   private setBusy(isBusy: boolean) {
     this.sendButton.disabled = isBusy;
     this.sendButton.setText(isBusy ? "Thinking..." : "Send");
@@ -574,6 +655,10 @@ class VaultAiChatView extends ItemView {
   }
 
   private buildSystemPrompt(activeNote: string, sources: SearchResult[]) {
+    if (this.activeConversationId === this.bootstrapConversationId) {
+      return BOOTSTRAP_SYSTEM_PROMPT;
+    }
+
     const sourceText = sources
       .map((source, index) => `Source ${index + 1}: ${source.path}\n${source.excerpt}`)
       .join("\n\n");
@@ -583,20 +668,33 @@ class VaultAiChatView extends ItemView {
       ? `\nExternal MCP tools available to you: ${mcpTools.map((t) => t.function.name).join(", ")}.`
       : "";
 
-    return [
+    const parts: string[] = [
       "You are an AI assistant running inside Obsidian.",
       "Conversation scope is strict: use only this active chat conversation's messages plus vault/current-note context supplied in this request.",
       "Never use or infer information from other Vault AI Chat conversations, history items, tabs, windows, panes, or prior conversations.",
       "Use the active note and retrieved vault context when relevant.",
       "Cite note paths naturally when you rely on them.",
       `You can use vault file tools and any external tools listed below.${mcpSection}`,
-      "Ask for the smallest necessary change. Destructive actions may be denied by plugin settings or user confirmation.",
+      "Ask for the smallest necessary change. Destructive actions may be denied by plugin settings or user confirmation."
+    ];
+
+    if (this.personalizationContext.identity) {
+      parts.push("", "---", this.personalizationContext.identity);
+    }
+
+    if (this.personalizationContext.knowledge) {
+      parts.push("", "---", this.personalizationContext.knowledge);
+    }
+
+    parts.push(
       "",
       "Available vault context:",
       activeNote,
       "",
       sourceText || "No extra vault notes matched this request."
-    ].join("\n");
+    );
+
+    return parts.join("\n");
   }
 
   private toProviderMessages(conversation: Conversation): ChatMessage[] {
@@ -1198,6 +1296,41 @@ class McpServerModal extends Modal {
     return { name, type: "http", url };
   }
 }
+
+const IDENTITY_PATH = "IDENTITY.md";
+const KNOWLEDGE_PATH = "KNOWLEDGE.md";
+
+const BOOTSTRAP_SYSTEM_PROMPT = [
+  "You are running the one-time setup wizard for Vault AI Chat. Follow these five steps in strict order and complete each fully before moving to the next.",
+  "",
+  "STEP 1 — IDENTITY",
+  "Ask the user: who they are, what they do (professionally or personally), and what they primarily use Obsidian for. Wait for their full response before continuing.",
+  "",
+  "STEP 2 — PERSONALITY & TONE",
+  'Ask what kind of personality and tone they would like you to use in future conversations. Offer three example styles: "professional / courteous / efficient", "conversational / friendly / casual", "empathetic / supportive / patient". Let them know they can describe their own style instead. Wait for their response before continuing.',
+  "",
+  "STEP 3 — VAULT ANALYSIS",
+  "Without prompting the user, silently analyse their vault using list_folder and read_note. Traverse directories recursively: start with list_folder on the root (empty path), then call list_folder on every subfolder you find, repeating until you have a full picture of the structure. Only call read_note on files whose path ends in .md — skip all other file types (images, PDFs, attachments, etc.). Read 8–12 representative markdown files spread across different folders. Identify: recurring topics and themes, common note types and structures, how information is organised, and any notable patterns.",
+  "",
+  "STEP 4 — REVIEW & CONFIRM",
+  "Present a clear summary covering: the user's identity and Obsidian usage, their preferred tone, and the vault topics and patterns you found. Ask them to confirm or request corrections. If they request changes, revise and ask again.",
+  "",
+  "STEP 5 — WRITE FILES",
+  "Once the user confirms, call write_bootstrap_files with:",
+  "- identity_content: a markdown document written for an AI language model describing the user's identity, background, Obsidian usage, and communication preferences. Write in second person (e.g. 'The user is…').",
+  "- knowledge_content: a markdown document written for an AI language model describing the vault's topics, note structures, and organisational patterns. Write in second person.",
+  "",
+  "Do not skip steps. Do not write files before the user confirms the summary in Step 4."
+].join("\n");
+
+const BOOTSTRAP_TOOL_DEFINITION: ToolDefinition = defineTool(
+  "write_bootstrap_files",
+  "Write IDENTITY.md and KNOWLEDGE.md to the vault to complete the setup wizard.",
+  {
+    identity_content: { type: "string", description: "Markdown content for IDENTITY.md, written for an AI assistant audience." },
+    knowledge_content: { type: "string", description: "Markdown content for KNOWLEDGE.md, written for an AI assistant audience." }
+  }
+);
 
 const VAULT_TOOL_NAMES = new Set([
   "read_note", "create_note", "update_note", "delete_note",
