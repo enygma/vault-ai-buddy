@@ -701,7 +701,7 @@ class VaultAiChatView extends ItemView {
 
     const transcript = toSummarize
       .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => `${m.role}: ${(m.content ?? "").trim()}`)
+      .map((m) => `${m.role}: ${redactSecrets((m.content ?? "").trim())}`)
       .join("\n");
 
     if (!transcript.trim()) return;
@@ -754,7 +754,7 @@ class VaultAiChatView extends ItemView {
     }
 
     const sourceText = sources
-      .map((source, index) => `Source ${index + 1}: ${source.path}\n${source.excerpt}`)
+      .map((source, index) => `Source ${index + 1}: ${source.path}\n${redactSecrets(source.excerpt)}`)
       .join("\n\n");
 
     const mcpTools = this.mcpManager.getToolDefinitions();
@@ -790,7 +790,7 @@ class VaultAiChatView extends ItemView {
     parts.push(
       "",
       "Available vault context:",
-      activeNote,
+      redactSecrets(activeNote),
       "",
       sourceText || "No extra vault notes matched this request."
     );
@@ -800,7 +800,10 @@ class VaultAiChatView extends ItemView {
 
   private toProviderMessages(conversation: Conversation): ChatMessage[] {
     return conversation.messages.map((message) => {
-      const out: ChatMessage = { role: message.role, content: message.content };
+      const out: ChatMessage = {
+        role: message.role,
+        content: message.content != null ? redactSecrets(message.content) : null
+      };
       if (message.name !== undefined) out.name = message.name;
       if (message.tool_call_id !== undefined) out.tool_call_id = message.tool_call_id;
       if (message.tool_calls !== undefined) out.tool_calls = message.tool_calls;
@@ -1733,6 +1736,25 @@ function defineTool(name: string, description: string, properties: Record<string
       }
     }
   };
+}
+
+function redactSecrets(text: string): string {
+  if (!text) return text;
+  return text
+    // OpenAI / Anthropic-style keys (sk-... or sk-ant-...)
+    .replace(/\bsk-[a-zA-Z0-9\-_]{20,}\b/g, "[REDACTED:api_key]")
+    // Stripe live/test keys
+    .replace(/\bsk_(live|test)_[a-zA-Z0-9]{20,}\b/g, "[REDACTED:api_key]")
+    // GitHub tokens (personal, OAuth, server-to-server, refresh, user-to-server)
+    .replace(/\bgh[pousr]_[a-zA-Z0-9]{36,}\b/g, "[REDACTED:github_token]")
+    // AWS access key IDs
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED:aws_key]")
+    // PEM private and certificate keys
+    .replace(/-----BEGIN [A-Z ]*(?:PRIVATE|CERTIFICATE) KEY-----[\s\S]*?-----END [A-Z ]*(?:PRIVATE|CERTIFICATE) KEY-----/g, "[REDACTED:private_key]")
+    // Variable assignments: PASSWORD=abc123abc, TOKEN: abc123abc (8+ chars, no spaces)
+    .replace(/\b(password|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?token|bearer|credential|passwd)\s*[:=]\s*["']?[A-Za-z0-9+/\-_.]{8,}["']?/gi, "$1=[REDACTED]")
+    // JSON key-value: "password": "abc123abc"
+    .replace(/"(password|secret|token|api_key|access_key|private_key|auth|credential)"\s*:\s*"[^"]{8,}"/gi, '"$1": "[REDACTED]"');
 }
 
 function mentionsActiveNote(content: string): boolean {
