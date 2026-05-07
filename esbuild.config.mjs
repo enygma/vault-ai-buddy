@@ -8,7 +8,7 @@ const context = await esbuild.context({
   banner: {
     js: "/* Vault AI Chat */"
   },
-  entryPoints: ["main.ts"],
+  entryPoints: ["src/main.ts"],
   bundle: true,
   external: [
     "obsidian",
