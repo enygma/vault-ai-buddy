@@ -1,6 +1,6 @@
 {
-  "id": "vault-ai-chat",
-  "name": "Vault AI Chat",
+  "id": "vault-ai-buddy",
+  "name": "Vault AI Buddy",
   "version": "v0.1.1",
   "minAppVersion": "1.5.0",
   "description": "Chat with an AI inside Obsidian, grounded in your vault, with guarded note and folder actions.",
