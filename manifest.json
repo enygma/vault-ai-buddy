@@ -1,9 +1,9 @@
 {
   "id": "vault-ai-buddy",
   "name": "Vault AI Buddy",
-  "version": "v0.1.1",
+  "version": "0.1.3",
   "minAppVersion": "1.5.0",
-  "description": "Chat with an AI inside Obsidian, grounded in your vault, with guarded note and folder actions.",
+  "description": "An AI-powered assistant for your vault for inspection and introspection.",
   "author": "Chris Cornutt",
   "isDesktopOnly": true
 }

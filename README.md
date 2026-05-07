@@ -1,6 +1,6 @@
 # Vault AI Chat
 
-Vault AI Chat brings an AI assistant directly into Obsidian. It lives in a sidebar panel and understands your vault — it can search your notes for relevant context, read and edit files on your behalf, and connect to external tools via MCP servers. Think of it as a research and writing partner that already knows what's in your vault.
+Vault AI Chat brings an AI assistant directly into where your notes live. It lives in a sidebar panel and understands your vault — it can search your notes for relevant context, read and edit files on your behalf, and connect to external tools via MCP servers. Think of it as a research and writing partner that already knows what's in your vault.
 
 ---
 
@@ -31,7 +31,7 @@ Vault AI Chat brings an AI assistant directly into Obsidian. It lives in a sideb
 
 The first time you open the chat panel (click the message icon in the left ribbon, or use the **Open Vault AI Chat** command), you'll be walked through a short setup wizard that:
 
-1. Asks who you are and how you use Obsidian
+1. Asks who you are and how you use the software
 2. Asks what tone and personality you'd like the AI to use
 3. Silently scans a sample of your vault notes to identify topics and patterns
 4. Asks you to confirm before saving anything
