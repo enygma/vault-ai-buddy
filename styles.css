@@ -126,7 +126,21 @@
 }
 
 .vault-ai-chat__message--assistant {
+  align-items: flex-start;
   background: var(--background-primary);
+  display: flex;
+  gap: 6px;
+}
+
+.vault-ai-chat__assistant-icon {
+  flex-shrink: 0;
+  font-size: 20px;
+  padding-top: 1px;
+}
+
+.vault-ai-chat__message--assistant .vault-ai-chat__markdown {
+  flex: 1;
+  min-width: 0;
 }
 
 .vault-ai-chat__message--tool {

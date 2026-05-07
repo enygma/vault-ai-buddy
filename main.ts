@@ -385,7 +385,7 @@ class VaultAiChatView extends ItemView {
       const mergedTools = [
         ...VAULT_TOOL_DEFINITIONS,
         ...mcpToolDefs,
-        ...(isBootstrap ? [BOOTSTRAP_TOOL_DEFINITION] : [])
+        ...(isBootstrap ? [BOOTSTRAP_TOOL_DEFINITION] : [REMEMBER_TOOL_DEFINITION])
       ];
       if (shouldGenerateTitle) {
         void this.generateConversationTitle(conversation, content, client);
@@ -430,9 +430,11 @@ class VaultAiChatView extends ItemView {
       for (const call of toolCalls) {
         const result = call.function.name === "write_bootstrap_files"
           ? await this.runBootstrapTool(call)
-          : VAULT_TOOL_NAMES.has(call.function.name)
-            ? await this.tools.run(call)
-            : await this.runMcpTool(call);
+          : call.function.name === "remember"
+            ? await this.runRememberTool(call)
+            : VAULT_TOOL_NAMES.has(call.function.name)
+              ? await this.tools.run(call)
+              : await this.runMcpTool(call);
         conversation.messages.push({
           role: "tool",
           name: call.function.name,
@@ -482,6 +484,7 @@ class VaultAiChatView extends ItemView {
         const markdownEl = details.createDiv("vault-ai-chat__markdown markdown-rendered");
         void MarkdownRenderer.render(this.app, message.content || "(empty message)", markdownEl, sourcePath, this);
       } else if (message.role === "assistant") {
+        el.createSpan({ text: "🤖", cls: "vault-ai-chat__assistant-icon" });
         const markdownEl = el.createDiv("vault-ai-chat__markdown markdown-rendered");
         void MarkdownRenderer.render(this.app, message.content || "(empty message)", markdownEl, sourcePath, this);
       } else {
@@ -603,6 +606,36 @@ class VaultAiChatView extends ItemView {
     return this.mcpManager.callTool(call.function.name, args);
   }
 
+  private async runRememberTool(call: ToolCall): Promise<string> {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+    } catch {
+      return "Tool arguments were not valid JSON.";
+    }
+    try {
+      const content = requiredString(args.content, "content");
+      const date = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
+      const entry = `- ${content} *(${date})*`;
+      const existing = this.personalizationContext.knowledge;
+      let updated: string;
+
+      if (existing.includes("## Remembered")) {
+        updated = existing + "\n" + entry;
+      } else if (existing.trim()) {
+        updated = existing + "\n\n## Remembered\n" + entry;
+      } else {
+        updated = `## Remembered\n${entry}`;
+      }
+
+      await this.writeVaultFile(KNOWLEDGE_PATH, updated);
+      await this.loadPersonalizationContext();
+      return `Remembered: "${content}"`;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
   private async runBootstrapTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
@@ -655,8 +688,16 @@ class VaultAiChatView extends ItemView {
   private async summarizeIfNeeded(conversation: Conversation, client: AiClient): Promise<void> {
     if (!this.needsSummarization(conversation)) return;
 
-    const toSummarize = conversation.messages.slice(0, -6);
-    const recent = conversation.messages.slice(-6);
+    // Walk back from the -6 boundary to the nearest user message so we never
+    // start the kept slice mid tool-call sequence (tool message with no preceding tool_calls).
+    let keepFrom = Math.max(0, conversation.messages.length - 6);
+    while (keepFrom > 0 && conversation.messages[keepFrom].role !== "user") {
+      keepFrom--;
+    }
+    if (keepFrom <= 0) return;
+
+    const toSummarize = conversation.messages.slice(0, keepFrom);
+    const recent = conversation.messages.slice(keepFrom);
 
     const transcript = toSummarize
       .filter((m) => m.role === "user" || m.role === "assistant")
@@ -730,6 +771,7 @@ class VaultAiChatView extends ItemView {
       "Use the active note and retrieved vault context when relevant.",
       "Cite note paths naturally when you rely on them.",
       `You can use vault file tools and any external tools listed below.${mcpSection}`,
+      "Use the remember tool when the user explicitly asks you to remember something — it will be saved to KNOWLEDGE.md and available in all future conversations.",
       "Ask for the smallest necessary change. Destructive actions may be denied by plugin settings or user confirmation."
     ];
 
@@ -1391,6 +1433,14 @@ const BOOTSTRAP_SYSTEM_PROMPT = [
   "",
   "Do not skip steps. Do not write files before the user confirms the summary in Step 4."
 ].join("\n");
+
+const REMEMBER_TOOL_DEFINITION: ToolDefinition = defineTool(
+  "remember",
+  "Save a piece of information to long-term memory (KNOWLEDGE.md) for use in all future conversations. Use this only when the user explicitly asks you to remember something.",
+  {
+    content: { type: "string", description: "The information to remember, written as a clear, concise, standalone note." }
+  }
+);
 
 const BOOTSTRAP_TOOL_DEFINITION: ToolDefinition = defineTool(
   "write_bootstrap_files",
