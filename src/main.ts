@@ -741,6 +741,11 @@ class VaultAiChatView extends ItemView {
     if (!file) return "No active note.";
 
     const content = await this.app.vault.cachedRead(file);
+
+    if (containsSecrets(content)) {
+      console.log(`[Security] Active note excluded (contains secrets): ${file.path}`);
+      return `Active note (${file.path}) was not included because it appears to contain sensitive information.`;
+    }
     const activeMarkdown = this.app.workspace.getActiveViewOfType(MarkdownView);
     const selection = activeMarkdown?.editor.getSelection().trim();
     const selectionText = selection ? `\n\nCurrent selection:\n${truncate(selection, 2000)}` : "";
@@ -920,11 +925,15 @@ class VaultSearch {
       }
 
       if (score > 0) {
-        scored.push({
-          path: file.path,
-          score,
-          excerpt: buildExcerpt(content, terms)
-        });
+        if (containsSecrets(content)) {
+          console.log(`[Security] Excluded from context (contains secrets): ${file.path}`);
+        } else {
+          scored.push({
+            path: file.path,
+            score,
+            excerpt: buildExcerpt(content, terms)
+          });
+        }
       }
     }
 
@@ -971,7 +980,12 @@ class VaultTools {
 
   private async readNote(path: string) {
     const file = this.getFile(path);
-    return truncate(await this.plugin.app.vault.cachedRead(file), 12000);
+    const content = await this.plugin.app.vault.cachedRead(file);
+    if (containsSecrets(content)) {
+      console.log(`[Security] read_note blocked (contains secrets): ${file.path}`);
+      return `Note at ${file.path} was not returned because it appears to contain sensitive information.`;
+    }
+    return truncate(content, 12000);
   }
 
   private async createNote(path: string, content: string) {
@@ -1736,6 +1750,19 @@ function defineTool(name: string, description: string, properties: Record<string
       }
     }
   };
+}
+
+function containsSecrets(text: string): boolean {
+  if (!text) return false;
+  return (
+    /\bsk-[a-zA-Z0-9\-_]{20,}\b/.test(text) ||
+    /\bsk_(live|test)_[a-zA-Z0-9]{20,}\b/.test(text) ||
+    /\bgh[pousr]_[a-zA-Z0-9]{36,}\b/.test(text) ||
+    /\bAKIA[0-9A-Z]{16}\b/.test(text) ||
+    /-----BEGIN [A-Z ]*(?:PRIVATE|CERTIFICATE) KEY-----/.test(text) ||
+    /\b(password|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?token|bearer|credential|passwd)\s*[:=]\s*["']?[A-Za-z0-9+/\-_.]{8,}["']?/i.test(text) ||
+    /"(password|secret|token|api_key|access_key|private_key|auth|credential)"\s*:\s*"[^"]{8,}"/i.test(text)
+  );
 }
 
 function redactSecrets(text: string): string {
