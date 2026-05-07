@@ -1,0 +1,9 @@
+{
+  "id": "vault-ai-chat",
+  "name": "Vault AI Chat",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Chat with an AI inside Obsidian, grounded in your vault, with guarded note and folder actions.",
+  "author": "Chris Cornutt",
+  "isDesktopOnly": false
+}
