@@ -131,13 +131,13 @@ export default class VaultAiChatPlugin extends Plugin {
       (leaf) => new VaultAiChatView(leaf, this)
     );
 
-    this.addRibbonIcon("message-square", "Open Vault AI Buddy", () => {
+    this.addRibbonIcon("message-square", "Open vault AI buddy", () => {
       void this.openChat();
     });
 
     this.addCommand({
       id: "new-vault-ai-chat",
-      name: "New Vault AI Buddy",
+      name: "New chat",
       callback: () => void this.openChat({ createNew: true })
     });
 
@@ -166,12 +166,12 @@ export default class VaultAiChatPlugin extends Plugin {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_VAULT_AI_CHAT)[0];
     const leaf = existing ?? this.app.workspace.getRightLeaf(false);
     if (!leaf) {
-      new Notice("Could not open Vault AI Buddy.");
+      new Notice("Could not open vault AI buddy.");
       return;
     }
 
     await leaf.setViewState({ type: VIEW_TYPE_VAULT_AI_CHAT, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    void this.app.workspace.revealLeaf(leaf);
 
     const view = leaf.view;
     if (view instanceof VaultAiChatView) {
@@ -190,7 +190,8 @@ export default class VaultAiChatPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const stored: unknown = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stored as Partial<VaultAiChatSettings>);
   }
 
   async saveSettings() {
@@ -228,7 +229,7 @@ class VaultAiChatView extends ItemView {
   }
 
   getDisplayText() {
-    return "Vault AI Buddy";
+    return "Vault AI buddy";
   }
 
   getIcon() {
@@ -257,7 +258,7 @@ class VaultAiChatView extends ItemView {
     const actions = header.createDiv("vault-ai-chat__actions");
     const newButton = actions.createEl("button", { text: "New" });
     const historyButton = actions.createEl("button", { text: "Sessions" });
-    const mcpButton = actions.createEl("button", { text: "MCPs" });
+    const mcpButton = actions.createEl("button", { text: "Integrations" });
     newButton.addEventListener("click", () => this.startConversation());
     historyButton.addEventListener("click", () => {
       this.historyEl.toggleClass("is-visible", !this.historyEl.hasClass("is-visible"));
@@ -282,7 +283,7 @@ class VaultAiChatView extends ItemView {
     });
 
     const toolbar = composer.createDiv("vault-ai-chat__toolbar");
-    toolbar.createEl("span", {
+    toolbar.createSpan({
       text: "Mention \"active note\" to include it · relevant vault notes always searched"
     });
     this.sendButton = toolbar.createEl("button", {
@@ -309,7 +310,7 @@ class VaultAiChatView extends ItemView {
       this.renderMessages();
     }
 
-    setTimeout(() => this.inputEl?.focus(), 0);
+    activeWindow.setTimeout(() => this.inputEl?.focus(), 0);
   }
 
   startConversation(seedMessage?: string) {
@@ -365,7 +366,7 @@ class VaultAiChatView extends ItemView {
     const conversation = this.activeConversation();
 
     if (!this.plugin.settings.apiKey) {
-      new Notice("Add an API key in Vault AI Buddy settings first.");
+      new Notice("Add an API key in settings first.");
       return;
     }
 
@@ -404,7 +405,7 @@ class VaultAiChatView extends ItemView {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       conversation.messages.push({ role: "assistant", content: `I hit an error: ${message}` });
-      new Notice("Vault AI Buddy request failed.");
+      new Notice("Vault AI buddy request failed.");
     } finally {
       conversation.updatedAt = Date.now();
       this.setBusy(false);
@@ -567,6 +568,7 @@ class VaultAiChatView extends ItemView {
 
     const configs = this.plugin.settings.mcpServers;
     if (!configs.length) {
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       this.mcpPanelEl.createEl("p", { text: "No MCP servers configured.", cls: "vault-ai-chat__mcp-empty" });
       return;
     }
@@ -575,23 +577,22 @@ class VaultAiChatView extends ItemView {
 
     for (const config of configs) {
       const tools = toolsByServer.get(config.name);
-      const connected = tools !== undefined;
       const item = this.mcpPanelEl.createDiv("vault-ai-chat__mcp-item");
 
-      if (connected && tools!.length > 0) {
+      if (tools && tools.length > 0) {
         const details = item.createEl("details", { cls: "vault-ai-chat__mcp-details" });
         const summary = details.createEl("summary", { cls: "vault-ai-chat__mcp-summary" });
         summary.createSpan({ text: config.name, cls: "vault-ai-chat__mcp-name" });
-        summary.createSpan({ text: `${tools!.length} tools`, cls: "vault-ai-chat__mcp-meta" });
+        summary.createSpan({ text: `${tools.length} tools`, cls: "vault-ai-chat__mcp-meta" });
         const list = details.createEl("ul", { cls: "vault-ai-chat__mcp-tools" });
-        for (const tool of tools!) {
+        for (const tool of tools) {
           list.createEl("li", { text: tool.function.name, cls: "vault-ai-chat__mcp-tool" });
         }
       } else {
         const row = item.createDiv("vault-ai-chat__mcp-summary");
         row.createSpan({ text: config.name, cls: "vault-ai-chat__mcp-name" });
         row.createSpan({
-          text: connected ? "no tools" : "failed to connect",
+          text: tools !== undefined ? "no tools" : "failed to connect",
           cls: "vault-ai-chat__mcp-meta"
         });
       }
@@ -601,7 +602,8 @@ class VaultAiChatView extends ItemView {
   private async runMcpTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(call.function.arguments || "{}");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+      args = (JSON.parse(call.function.arguments || "{}") as unknown) as Record<string, unknown>;
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -611,7 +613,8 @@ class VaultAiChatView extends ItemView {
   private async runRememberTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(call.function.arguments || "{}");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+      args = (JSON.parse(call.function.arguments || "{}") as unknown) as Record<string, unknown>;
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -641,7 +644,8 @@ class VaultAiChatView extends ItemView {
   private async runBootstrapTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(call.function.arguments || "{}");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+      args = (JSON.parse(call.function.arguments || "{}") as unknown) as Record<string, unknown>;
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -952,7 +956,8 @@ class VaultTools {
   async run(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(call.function.arguments || "{}");
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+      args = (JSON.parse(call.function.arguments || "{}") as unknown) as Record<string, unknown>;
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -1141,13 +1146,13 @@ class VaultAiChatSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("Vault AI Buddy").setHeading();
 
     new Setting(containerEl)
       .setName("API key")
       .setDesc("Stored in plain text in the plugin's data.json file inside your vault. Obsidian has no built-in secure key storage — do not store the vault in a shared or unencrypted location if this is a concern.")
       .addText((text) => {
         text
+          // eslint-disable-next-line obsidianmd/ui/sentence-case
           .setPlaceholder("sk-...")
           .setValue(this.plugin.settings.apiKey)
           .onChange(async (value) => {
@@ -1162,6 +1167,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setDesc("OpenAI-compatible API base URL.")
       .addText((text) =>
         text
+          // eslint-disable-next-line obsidianmd/ui/sentence-case
           .setPlaceholder("https://api.openai.com/v1")
           .setValue(this.plugin.settings.baseUrl)
           .onChange(async (value) => {
@@ -1174,6 +1180,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setName("Model")
       .addText((text) =>
         text
+          // eslint-disable-next-line obsidianmd/ui/sentence-case
           .setPlaceholder("gpt-4o-mini")
           .setValue(this.plugin.settings.model)
           .onChange(async (value) => {
@@ -1201,6 +1208,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setDesc("Optional folder path that AI file actions must stay inside.")
       .addText((text) =>
         text
+          // eslint-disable-next-line obsidianmd/ui/sentence-case
           .setPlaceholder("Projects/AI Notes")
           .setValue(this.plugin.settings.allowedRoot)
           .onChange(async (value) => {
@@ -1233,8 +1241,11 @@ class VaultAiChatSettingTab extends PluginSettingTab {
           })
       );
 
+     
     new Setting(containerEl)
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setName("MCP servers")
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setDesc("Configure MCP servers to expose additional tools to the AI. Servers are reloaded automatically when you add or remove an entry.")
       .setHeading();
 
@@ -1267,6 +1278,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .addButton((btn) =>
+        // eslint-disable-next-line obsidianmd/ui/sentence-case
         btn.setButtonText("Add MCP server").onClick(() => {
           new McpServerModal(this.app, null, (config) => {
             this.plugin.settings.mcpServers.push(config);
@@ -1316,6 +1328,7 @@ class McpServerModal extends Modal {
       .addDropdown((dropdown) => {
         this.typeEl = dropdown.selectEl;
         dropdown
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
           .addOption("stdio", "stdio (local process)")
           .addOption("http", "HTTP")
           .setValue(this.existing?.type ?? "stdio")
@@ -1340,6 +1353,7 @@ class McpServerModal extends Modal {
 
     const stdioEnv = new Setting(contentEl)
       .setName("Environment variables")
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setDesc("One KEY=VALUE per line (optional).")
       .addTextArea((text) => {
         this.envEl = text.inputEl;
@@ -1348,6 +1362,7 @@ class McpServerModal extends Modal {
 
     const httpUrl = new Setting(contentEl)
       .setName("URL")
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setDesc("HTTP server base URL, e.g. http://localhost:3000")
       .addText((text) => {
         this.urlEl = text.inputEl;
@@ -1413,7 +1428,7 @@ class McpServerModal extends Modal {
       const parsed = new URL(url);
       if (!["http:", "https:"].includes(parsed.protocol)) throw new Error();
     } catch {
-      new Notice("URL must be a valid http or https address.");
+      new Notice("URL must be a valid HTTP or HTTPS address.");
       return null;
     }
     return { name, type: "http", url };
@@ -1580,13 +1595,13 @@ class StdioMcpClient implements McpClient {
   private request(method: string, params: unknown, timeoutMs = 30000): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
-      const timer = setTimeout(() => {
+      const timer = activeWindow.setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`MCP request "${method}" timed out.`));
       }, timeoutMs);
       this.pending.set(id, {
-        resolve: (r) => { clearTimeout(timer); resolve(r); },
-        reject: (e) => { clearTimeout(timer); reject(e); }
+        resolve: (r) => { activeWindow.clearTimeout(timer); resolve(r); },
+        reject: (e) => { activeWindow.clearTimeout(timer); reject(e); }
       });
       this.childProcess?.stdin?.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     });
