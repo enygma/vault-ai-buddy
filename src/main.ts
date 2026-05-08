@@ -131,13 +131,13 @@ export default class VaultAiChatPlugin extends Plugin {
       (leaf) => new VaultAiChatView(leaf, this)
     );
 
-    this.addRibbonIcon("message-square", "Open Vault AI Chat", () => {
+    this.addRibbonIcon("message-square", "Open Vault AI Buddy", () => {
       void this.openChat();
     });
 
     this.addCommand({
       id: "new-vault-ai-chat",
-      name: "New Vault AI Chat",
+      name: "New Vault AI Buddy",
       callback: () => void this.openChat({ createNew: true })
     });
 
@@ -166,7 +166,7 @@ export default class VaultAiChatPlugin extends Plugin {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_VAULT_AI_CHAT)[0];
     const leaf = existing ?? this.app.workspace.getRightLeaf(false);
     if (!leaf) {
-      new Notice("Could not open Vault AI Chat.");
+      new Notice("Could not open Vault AI Buddy.");
       return;
     }
 
@@ -228,15 +228,16 @@ class VaultAiChatView extends ItemView {
   }
 
   getDisplayText() {
-    return "Vault AI Chat";
+    return "Vault AI Buddy";
   }
 
   getIcon() {
     return "message-square";
   }
 
-  async onClose() {
+  onClose(): Promise<void> {
     this.mcpManager.destroy();
+    return Promise.resolve();
   }
 
   reloadMcpServers() {
@@ -364,7 +365,7 @@ class VaultAiChatView extends ItemView {
     const conversation = this.activeConversation();
 
     if (!this.plugin.settings.apiKey) {
-      new Notice("Add an API key in Vault AI Chat settings first.");
+      new Notice("Add an API key in Vault AI Buddy settings first.");
       return;
     }
 
@@ -403,7 +404,7 @@ class VaultAiChatView extends ItemView {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       conversation.messages.push({ role: "assistant", content: `I hit an error: ${message}` });
-      new Notice("Vault AI Chat request failed.");
+      new Notice("Vault AI Buddy request failed.");
     } finally {
       conversation.updatedAt = Date.now();
       this.setBusy(false);
@@ -773,7 +774,7 @@ class VaultAiChatView extends ItemView {
       "",
       "You are an AI assistant running inside Obsidian.",
       "Conversation scope is strict: use only this active chat conversation's messages plus vault/current-note context supplied in this request.",
-      "Never use or infer information from other Vault AI Chat conversations, history items, tabs, windows, panes, or prior conversations.",
+      "Never use or infer information from other Vault AI Buddy conversations, history items, tabs, windows, panes, or prior conversations.",
       "Use the active note and retrieved vault context when relevant.",
       "Cite note paths naturally when you rely on them.",
       `You can use vault file tools and any external tools listed below.${mcpSection}`,
@@ -1009,7 +1010,7 @@ class VaultTools {
 
   private async deleteNote(path: string) {
     if (!this.plugin.settings.allowDeletes) {
-      return "Delete is disabled in Vault AI Chat settings.";
+      return "Delete is disabled in Vault AI Buddy settings.";
     }
 
     const safePath = this.safePath(path);
@@ -1140,7 +1141,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("Vault AI Chat").setHeading();
+    new Setting(containerEl).setName("Vault AI Buddy").setHeading();
 
     new Setting(containerEl)
       .setName("API key")
@@ -1243,21 +1244,23 @@ class VaultAiChatSettingTab extends PluginSettingTab {
         .setDesc(server.type === "stdio" ? `stdio — ${server.command ?? ""}` : `http — ${server.url ?? ""}`)
         .addButton((btn) =>
           btn.setButtonText("Edit").onClick(() => {
-            new McpServerModal(this.app, server, async (updated) => {
+            new McpServerModal(this.app, server, (updated) => {
               const index = this.plugin.settings.mcpServers.indexOf(server);
               if (index !== -1) this.plugin.settings.mcpServers[index] = updated;
-              await this.plugin.saveSettings();
-              this.plugin.reloadMcpServers();
-              this.display();
+              void this.plugin.saveSettings().then(() => {
+                this.plugin.reloadMcpServers();
+                this.display();
+              });
             }).open();
           })
         )
         .addButton((btn) =>
-          btn.setButtonText("Remove").onClick(async () => {
+          btn.setButtonText("Remove").onClick(() => {
             this.plugin.settings.mcpServers = this.plugin.settings.mcpServers.filter((s) => s !== server);
-            await this.plugin.saveSettings();
-            this.plugin.reloadMcpServers();
-            this.display();
+            void this.plugin.saveSettings().then(() => {
+              this.plugin.reloadMcpServers();
+              this.display();
+            });
           })
         );
     }
@@ -1265,11 +1268,12 @@ class VaultAiChatSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .addButton((btn) =>
         btn.setButtonText("Add MCP server").onClick(() => {
-          new McpServerModal(this.app, null, async (config) => {
+          new McpServerModal(this.app, null, (config) => {
             this.plugin.settings.mcpServers.push(config);
-            await this.plugin.saveSettings();
-            this.plugin.reloadMcpServers();
-            this.display();
+            void this.plugin.saveSettings().then(() => {
+              this.plugin.reloadMcpServers();
+              this.display();
+            });
           }).open();
         })
       );
@@ -1430,7 +1434,7 @@ const SAFETY_PROMPT = [
 ].join("\n");
 
 const BOOTSTRAP_SYSTEM_PROMPT = [
-  "You are running the one-time setup wizard for Vault AI Chat. Follow these five steps in strict order and complete each fully before moving to the next.",
+  "You are running the one-time setup wizard for Vault AI Buddy. Follow these five steps in strict order and complete each fully before moving to the next.",
   "",
   "STEP 1 — IDENTITY",
   "Ask the user: who they are, what they do (professionally or personally), and what they primarily use Obsidian for. Wait for their full response before continuing.",

@@ -1,7 +1,7 @@
 {
   "id": "vault-ai-buddy",
   "name": "Vault AI Buddy",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "minAppVersion": "1.5.0",
   "description": "An AI-powered assistant for your vault for inspection and introspection of all your notes...and then some.",
   "author": "Chris Cornutt",
