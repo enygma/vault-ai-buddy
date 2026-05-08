@@ -11,7 +11,8 @@ import {
   TFile,
   TFolder,
   WorkspaceLeaf,
-  normalizePath
+  normalizePath,
+  requestUrl
 } from "obsidian";
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
@@ -249,7 +250,7 @@ class VaultAiChatView extends ItemView {
     this.contentEl.addClass("vault-ai-chat");
     void this.mcpManager.initialize(this.plugin.settings.mcpServers);
     void this.mcpManager.waitForReady().then(() => this.renderMcpPanel());
-    void this.loadPersonalizationContext();
+    await this.loadPersonalizationContext();
 
     const header = this.contentEl.createDiv("vault-ai-chat__header");
     const actions = header.createDiv("vault-ai-chat__actions");
@@ -599,7 +600,7 @@ class VaultAiChatView extends ItemView {
   private async runMcpTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+      args = JSON.parse(call.function.arguments || "{}");
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -609,7 +610,7 @@ class VaultAiChatView extends ItemView {
   private async runRememberTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+      args = JSON.parse(call.function.arguments || "{}");
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -639,7 +640,7 @@ class VaultAiChatView extends ItemView {
   private async runBootstrapTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+      args = JSON.parse(call.function.arguments || "{}");
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -743,7 +744,7 @@ class VaultAiChatView extends ItemView {
     const content = await this.app.vault.cachedRead(file);
 
     if (containsSecrets(content)) {
-      console.log(`[Security] Active note excluded (contains secrets): ${file.path}`);
+      console.warn(`[Security] Active note excluded (contains secrets): ${file.path}`);
       return `Active note (${file.path}) was not included because it appears to contain sensitive information.`;
     }
     const activeMarkdown = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -881,21 +882,22 @@ class AiClient {
       body.tool_choice = "auto";
     }
 
-    const response = await fetch(url, {
+    const response = await requestUrl({
+      url,
       method: "POST",
       headers: {
         "Authorization": `Bearer ${this.settings.apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      throw: false
     });
 
-    if (!response.ok) {
-      const body = (await response.text()).slice(0, 300);
-      throw new Error(`${response.status} ${response.statusText}: ${body}`);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`${response.status}: ${response.text.slice(0, 300)}`);
     }
 
-    const data = (await response.json()) as ChatCompletionResponse;
+    const data = response.json as ChatCompletionResponse;
     const message = data.choices[0]?.message;
     if (!message) throw new Error("The AI provider returned no message.");
     return message;
@@ -926,7 +928,7 @@ class VaultSearch {
 
       if (score > 0) {
         if (containsSecrets(content)) {
-          console.log(`[Security] Excluded from context (contains secrets): ${file.path}`);
+          console.warn(`[Security] Excluded from context (contains secrets): ${file.path}`);
         } else {
           scored.push({
             path: file.path,
@@ -949,7 +951,7 @@ class VaultTools {
   async run(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+      args = JSON.parse(call.function.arguments || "{}");
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -982,7 +984,7 @@ class VaultTools {
     const file = this.getFile(path);
     const content = await this.plugin.app.vault.cachedRead(file);
     if (containsSecrets(content)) {
-      console.log(`[Security] read_note blocked (contains secrets): ${file.path}`);
+      console.warn(`[Security] read_note blocked (contains secrets): ${file.path}`);
       return `Note at ${file.path} was not returned because it appears to contain sensitive information.`;
     }
     return truncate(content, 12000);
@@ -1013,7 +1015,7 @@ class VaultTools {
     const safePath = this.safePath(path);
     await this.confirm(`Delete ${safePath}?`);
     const file = this.getFile(safePath);
-    await this.plugin.app.vault.delete(file);
+    await this.plugin.app.fileManager.trashFile(file);
     return `Deleted ${safePath}.`;
   }
 
@@ -1094,7 +1096,7 @@ class ConfirmationModal extends Modal {
 
   onOpen() {
     this.contentEl.empty();
-    this.contentEl.createEl("h2", { text: "Confirm Vault Action" });
+    this.contentEl.createEl("h2", { text: "Confirm vault action" });
     this.contentEl.createEl("p", { text: this.message });
 
     const buttons = this.contentEl.createDiv();
@@ -1138,7 +1140,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Vault AI Chat" });
+    new Setting(containerEl).setName("Vault AI Chat").setHeading();
 
     new Setting(containerEl)
       .setName("API key")
@@ -1230,11 +1232,10 @@ class VaultAiChatSettingTab extends PluginSettingTab {
           })
       );
 
-    containerEl.createEl("h3", { text: "MCP Servers" });
-    containerEl.createEl("p", {
-      text: "Configure MCP servers to expose additional tools to the AI. Servers are reloaded automatically when you add or remove an entry.",
-      cls: "setting-item-description"
-    });
+    new Setting(containerEl)
+      .setName("MCP servers")
+      .setDesc("Configure MCP servers to expose additional tools to the AI. Servers are reloaded automatically when you add or remove an entry.")
+      .setHeading();
 
     for (const server of this.plugin.settings.mcpServers) {
       new Setting(containerEl)
@@ -1263,7 +1264,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .addButton((btn) =>
-        btn.setButtonText("Add MCP Server").onClick(() => {
+        btn.setButtonText("Add MCP server").onClick(() => {
           new McpServerModal(this.app, null, async (config) => {
             this.plugin.settings.mcpServers.push(config);
             await this.plugin.saveSettings();
@@ -1294,7 +1295,7 @@ class McpServerModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: this.existing ? "Edit MCP Server" : "Add MCP Server" });
+    contentEl.createEl("h2", { text: this.existing ? "Edit MCP server" : "Add MCP server" });
 
     new Setting(contentEl)
       .setName("Name")
@@ -1501,9 +1502,9 @@ class StdioMcpClient implements McpClient {
     const maskedEnv = Object.fromEntries(
       Object.entries(env).map(([k, v]) => [k, v.length > 4 ? `${v.slice(0, 4)}****` : "****"])
     );
-    console.log(`[MCP "${this.config.name}"] spawn: ${[command, ...args].join(" ")}`);
-    console.log(`[MCP "${this.config.name}"] PATH: ${augmentedPath}`);
-    if (Object.keys(maskedEnv).length) console.log(`[MCP "${this.config.name}"] env:`, maskedEnv);
+    console.debug(`[MCP "${this.config.name}"] spawn: ${[command, ...args].join(" ")}`);
+    console.debug(`[MCP "${this.config.name}"] PATH: ${augmentedPath}`);
+    if (Object.keys(maskedEnv).length) console.debug(`[MCP "${this.config.name}"] env:`, maskedEnv);
 
     this.childProcess = spawn(command, args, {
       env: { ...process.env, PATH: augmentedPath, ...env },
@@ -1514,12 +1515,12 @@ class StdioMcpClient implements McpClient {
     this.childProcess.stdout?.on("data", (data: Buffer) => this.handleData(data));
     this.childProcess.stderr?.on("data", (data: Buffer) => { stderrBuf += data.toString(); });
     this.childProcess.on("error", (err) => {
-      console.log(`[MCP "${this.config.name}"] error:`, err.message);
+      console.debug(`[MCP "${this.config.name}"] error:`, err.message);
       this.rejectAll(err);
     });
     this.childProcess.on("exit", (code) => {
-      console.log(`[MCP "${this.config.name}"] exited with code ${code ?? "null"}`);
-      if (stderrBuf.trim()) console.log(`[MCP "${this.config.name}"] stderr: ${stderrBuf.trim()}`);
+      console.debug(`[MCP "${this.config.name}"] exited with code ${code ?? "null"}`);
+      if (stderrBuf.trim()) console.debug(`[MCP "${this.config.name}"] stderr: ${stderrBuf.trim()}`);
       const detail = stderrBuf.trim() ? `: ${stderrBuf.slice(0, 300).trim()}` : "";
       this.rejectAll(new Error(`MCP server "${this.config.name}" exited with code ${code ?? "null"}${detail}`));
     });
@@ -1561,7 +1562,11 @@ class StdioMcpClient implements McpClient {
           const pending = this.pending.get(msg.id);
           if (pending) {
             this.pending.delete(msg.id);
-            msg.error ? pending.reject(new Error(msg.error.message)) : pending.resolve(msg.result ?? {});
+            if (msg.error) {
+              pending.reject(new Error(msg.error.message));
+            } else {
+              pending.resolve(msg.result ?? {});
+            }
           }
         }
       } catch { /* ignore unparseable lines */ }
@@ -1612,13 +1617,17 @@ class HttpMcpClient implements McpClient {
 
   private async post(method: string, params: unknown): Promise<unknown> {
     const id = this.nextId++;
-    const response = await fetch(this.config.url!, {
+    const response = await requestUrl({
+      url: this.config.url!,
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id, method, params })
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+      throw: false
     });
-    if (!response.ok) throw new Error(`MCP server "${this.config.name}" returned ${response.status}`);
-    const data = await response.json() as JsonRpcResponse;
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`MCP server "${this.config.name}" returned ${response.status}`);
+    }
+    const data = response.json as JsonRpcResponse;
     if (data.error) throw new Error(data.error.message);
     return data.result ?? {};
   }
@@ -1651,7 +1660,7 @@ class McpManager {
           }
           this.toolRegistry.set(tool.name, config.name);
         }
-        console.log(`[MCP "${config.name}"] ready — ${tools.length} tool(s): ${tools.map((t) => t.name).join(", ")}`);
+        console.debug(`[MCP "${config.name}"] ready — ${tools.length} tool(s): ${tools.map((t) => t.name).join(", ")}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         new Notice(`MCP server "${config.name}" failed to start: ${msg}`);
@@ -1705,7 +1714,7 @@ function mcpToolToDefinition(tool: McpTool): ToolDefinition {
     function: {
       name: tool.name,
       description: tool.description ?? "",
-      parameters: tool.inputSchema as Record<string, unknown>
+      parameters: tool.inputSchema
     }
   };
 }
@@ -1811,7 +1820,7 @@ function truncate(value: string, maxLength: number) {
 
 function cleanConversationTitle(value: string) {
   const words = value
-    .replace(/["'`*_#>\[\](){}:;,.!?]+/g, " ")
+    .replace(/["'`*_#>[\](){}:;,.!?]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .split(" ")
