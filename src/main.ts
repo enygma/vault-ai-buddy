@@ -568,8 +568,7 @@ class VaultAiChatView extends ItemView {
 
     const configs = this.plugin.settings.mcpServers;
     if (!configs.length) {
-      // eslint-disable-next-line obsidianmd/ui/sentence-case
-      this.mcpPanelEl.createEl("p", { text: "No MCP servers configured.", cls: "vault-ai-chat__mcp-empty" });
+      this.mcpPanelEl.createEl("p", { text: "No mcp servers configured.", cls: "vault-ai-chat__mcp-empty" });
       return;
     }
 
@@ -602,8 +601,7 @@ class VaultAiChatView extends ItemView {
   private async runMcpTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      args = (JSON.parse(call.function.arguments || "{}") as unknown) as Record<string, unknown>;
+      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -613,8 +611,7 @@ class VaultAiChatView extends ItemView {
   private async runRememberTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      args = (JSON.parse(call.function.arguments || "{}") as unknown) as Record<string, unknown>;
+      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -644,8 +641,7 @@ class VaultAiChatView extends ItemView {
   private async runBootstrapTool(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      args = (JSON.parse(call.function.arguments || "{}") as unknown) as Record<string, unknown>;
+      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -956,8 +952,7 @@ class VaultTools {
   async run(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      args = (JSON.parse(call.function.arguments || "{}") as unknown) as Record<string, unknown>;
+      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
     } catch {
       return "Tool arguments were not valid JSON.";
     }
@@ -1152,8 +1147,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setDesc("Stored in plain text in the plugin's data.json file inside your vault. Obsidian has no built-in secure key storage — do not store the vault in a shared or unencrypted location if this is a concern.")
       .addText((text) => {
         text
-          // eslint-disable-next-line obsidianmd/ui/sentence-case
-          .setPlaceholder("sk-...")
+              .setPlaceholder("Sk-...")
           .setValue(this.plugin.settings.apiKey)
           .onChange(async (value) => {
             this.plugin.settings.apiKey = value.trim();
@@ -1167,8 +1161,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setDesc("OpenAI-compatible API base URL.")
       .addText((text) =>
         text
-          // eslint-disable-next-line obsidianmd/ui/sentence-case
-          .setPlaceholder("https://api.openai.com/v1")
+              .setPlaceholder("HTTPS://api.OpenAI.com/v1")
           .setValue(this.plugin.settings.baseUrl)
           .onChange(async (value) => {
             this.plugin.settings.baseUrl = value.trim() || DEFAULT_SETTINGS.baseUrl;
@@ -1180,8 +1173,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setName("Model")
       .addText((text) =>
         text
-          // eslint-disable-next-line obsidianmd/ui/sentence-case
-          .setPlaceholder("gpt-4o-mini")
+              .setPlaceholder("GPT-4o-mini")
           .setValue(this.plugin.settings.model)
           .onChange(async (value) => {
             this.plugin.settings.model = value.trim() || DEFAULT_SETTINGS.model;
@@ -1208,8 +1200,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setDesc("Optional folder path that AI file actions must stay inside.")
       .addText((text) =>
         text
-          // eslint-disable-next-line obsidianmd/ui/sentence-case
-          .setPlaceholder("Projects/AI Notes")
+              .setPlaceholder("Projects/AI notes")
           .setValue(this.plugin.settings.allowedRoot)
           .onChange(async (value) => {
             this.plugin.settings.allowedRoot = normalizePath(value.trim());
@@ -1243,10 +1234,8 @@ class VaultAiChatSettingTab extends PluginSettingTab {
 
      
     new Setting(containerEl)
-      // eslint-disable-next-line obsidianmd/ui/sentence-case
-      .setName("MCP servers")
-      // eslint-disable-next-line obsidianmd/ui/sentence-case
-      .setDesc("Configure MCP servers to expose additional tools to the AI. Servers are reloaded automatically when you add or remove an entry.")
+      .setName("Mcp servers")
+      .setDesc("Configure mcp servers to expose additional tools to the AI. Servers are reloaded automatically when you add or remove an entry.")
       .setHeading();
 
     for (const server of this.plugin.settings.mcpServers) {
@@ -1278,8 +1267,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .addButton((btn) =>
-        // eslint-disable-next-line obsidianmd/ui/sentence-case
-        btn.setButtonText("Add MCP server").onClick(() => {
+          btn.setButtonText("Add mcp server").onClick(() => {
           new McpServerModal(this.app, null, (config) => {
             this.plugin.settings.mcpServers.push(config);
             void this.plugin.saveSettings().then(() => {
@@ -1311,7 +1299,7 @@ class McpServerModal extends Modal {
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: this.existing ? "Edit MCP server" : "Add MCP server" });
+    contentEl.createEl("h2", { text: this.existing ? "Edit mcp server" : "Add mcp server" });
 
     new Setting(contentEl)
       .setName("Name")
@@ -1328,8 +1316,7 @@ class McpServerModal extends Modal {
       .addDropdown((dropdown) => {
         this.typeEl = dropdown.selectEl;
         dropdown
-      // eslint-disable-next-line obsidianmd/ui/sentence-case
-          .addOption("stdio", "stdio (local process)")
+          .addOption("stdio", "Stdio (local process)")
           .addOption("http", "HTTP")
           .setValue(this.existing?.type ?? "stdio")
           .onChange((value) => updateVisibility(value));
@@ -1353,8 +1340,7 @@ class McpServerModal extends Modal {
 
     const stdioEnv = new Setting(contentEl)
       .setName("Environment variables")
-      // eslint-disable-next-line obsidianmd/ui/sentence-case
-      .setDesc("One KEY=VALUE per line (optional).")
+      .setDesc("One key=value per line (optional).")
       .addTextArea((text) => {
         this.envEl = text.inputEl;
         text.setValue(Object.entries(this.existing?.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n"));
@@ -1362,8 +1348,7 @@ class McpServerModal extends Modal {
 
     const httpUrl = new Setting(contentEl)
       .setName("URL")
-      // eslint-disable-next-line obsidianmd/ui/sentence-case
-      .setDesc("HTTP server base URL, e.g. http://localhost:3000")
+      .setDesc("HTTP server base URL, e.g. HTTP://localhost:3000")
       .addText((text) => {
         this.urlEl = text.inputEl;
         text.setValue(this.existing?.url ?? "");

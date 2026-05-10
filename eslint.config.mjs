@@ -19,10 +19,12 @@ export default [
     },
     rules: {
       ...tsPlugin.configs.recommended.rules,
-      "no-undef": "off",           // TypeScript handles this
+      "no-undef": "off",
       "no-console": "warn",
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      // The Obsidian bot config does not include this rule; disabling locally keeps configs aligned
+      "@typescript-eslint/no-unnecessary-type-assertion": "off",
     },
   },
 ];
