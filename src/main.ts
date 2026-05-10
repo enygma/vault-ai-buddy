@@ -1173,7 +1173,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setName("Model")
       .addText((text) =>
         text
-              .setPlaceholder("gpt-4o-mini")
+              .setPlaceholder("Gpt-4o-mini")
           .setValue(this.plugin.settings.model)
           .onChange(async (value) => {
             this.plugin.settings.model = value.trim() || DEFAULT_SETTINGS.model;
