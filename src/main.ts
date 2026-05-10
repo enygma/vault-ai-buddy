@@ -654,8 +654,8 @@ class VaultAiChatView extends ItemView {
       this.bootstrapConversationId = null;
       this.plugin.settings.bootstrapComplete = true;
       await this.plugin.saveSettings();
-      new Notice("Setup complete! Your preferences have been saved to IDENTITY.md and KNOWLEDGE.md.");
-      return "Bootstrap complete. IDENTITY.md and KNOWLEDGE.md have been written to the vault root.";
+      new Notice("Setup complete! Your preferences have been saved to my identity and knowledge files.");
+      return "Bootstrap complete. Identity and knowledge have been written to the vault root.";
     } catch (err) {
       return err instanceof Error ? err.message : String(err);
     }
@@ -1158,7 +1158,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Base URL")
-      .setDesc("OpenAI-compatible API base URL.")
+      .setDesc("Openai-compatible API base URL.")
       .addText((text) =>
         text
               .setPlaceholder("HTTPS://api.OpenAI.com/v1")
@@ -1173,7 +1173,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setName("Model")
       .addText((text) =>
         text
-              .setPlaceholder("GPT-4o-mini")
+              .setPlaceholder("gpt-4o-mini")
           .setValue(this.plugin.settings.model)
           .onChange(async (value) => {
             this.plugin.settings.model = value.trim() || DEFAULT_SETTINGS.model;
