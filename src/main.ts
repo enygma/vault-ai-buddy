@@ -1,5 +1,6 @@
 import {
   App,
+  FuzzySuggestModal,
   ItemView,
   MarkdownRenderer,
   MarkdownView,
@@ -29,6 +30,8 @@ interface VaultAiChatSettings {
   allowedRoot: string;
   mcpServers: McpServerConfig[];
   bootstrapComplete: boolean;
+  completionSoundPath: string;
+  completionSoundVolume: number;
 }
 
 const DEFAULT_SETTINGS: VaultAiChatSettings = {
@@ -38,9 +41,11 @@ const DEFAULT_SETTINGS: VaultAiChatSettings = {
   maxContextNotes: 6,
   requireConfirmation: true,
   allowDeletes: false,
-  allowedRoot: "",
+  allowedRoot: "/",
   mcpServers: [],
-  bootstrapComplete: false
+  bootstrapComplete: false,
+  completionSoundPath: "",
+  completionSoundVolume: 0.5
 };
 
 type ChatRole = "system" | "user" | "assistant" | "tool";
@@ -197,6 +202,17 @@ export default class VaultAiChatPlugin extends Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
   }
+
+  playCompletionSound() {
+    const { completionSoundPath, completionSoundVolume } = this.settings;
+    if (!completionSoundPath) return;
+    const file = this.app.vault.getAbstractFileByPath(completionSoundPath);
+    if (!(file instanceof TFile)) return;
+    const url = this.app.vault.getResourcePath(file);
+    const audio = new Audio(url);
+    audio.volume = Math.max(0, Math.min(1, completionSoundVolume));
+    void audio.play();
+  }
 }
 
 class VaultAiChatView extends ItemView {
@@ -220,7 +236,7 @@ class VaultAiChatView extends ItemView {
     super(leaf);
     this.plugin = plugin;
     this.search = new VaultSearch(plugin.app);
-    this.tools = new VaultTools(plugin);
+    this.tools = new VaultTools(plugin, (message) => this.confirmInline(message));
     this.mcpManager = new McpManager();
   }
 
@@ -402,6 +418,7 @@ class VaultAiChatView extends ItemView {
       ], { toolDefs: mergedTools });
 
       await this.handleAssistantMessage(conversation, response, client, sources, activeNote, mergedTools);
+      this.playCompletionSound();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       conversation.messages.push({ role: "assistant", content: `I hit an error: ${message}` });
@@ -733,6 +750,33 @@ class VaultAiChatView extends ItemView {
     }
   }
 
+  private confirmInline(message: string): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const el = this.messagesEl.createDiv("vault-ai-chat__confirm");
+      el.createSpan({ text: message, cls: "vault-ai-chat__confirm-message" });
+      const buttons = el.createDiv("vault-ai-chat__confirm-buttons");
+
+      const complete = (approved: boolean) => {
+        el.empty();
+        el.addClass(approved ? "vault-ai-chat__confirm--approved" : "vault-ai-chat__confirm--denied");
+        el.createSpan({ text: approved ? `Approved: ${message}` : `Cancelled: ${message}` });
+        resolve(approved);
+      };
+
+      buttons.createEl("button", { text: "Approve", cls: "mod-cta" })
+        .addEventListener("click", () => complete(true));
+      buttons.createEl("button", { text: "Cancel" })
+        .addEventListener("click", () => complete(false));
+
+      this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight });
+      this.plugin.playCompletionSound();
+    });
+  }
+
+  private playCompletionSound() {
+    this.plugin.playCompletionSound();
+  }
+
   private setBusy(isBusy: boolean) {
     this.sendButton.disabled = isBusy;
     this.sendButton.setText(isBusy ? "Thinking..." : "Send");
@@ -745,7 +789,6 @@ class VaultAiChatView extends ItemView {
     const content = await this.app.vault.cachedRead(file);
 
     if (containsSecrets(content)) {
-      console.warn(`[Security] Active note excluded (contains secrets): ${file.path}`);
       return `Active note (${file.path}) was not included because it appears to contain sensitive information.`;
     }
     const activeMarkdown = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -778,6 +821,7 @@ class VaultAiChatView extends ItemView {
       "Use the active note and retrieved vault context when relevant.",
       "Cite note paths naturally when you rely on them.",
       `You can use vault file tools and any external tools listed below.${mcpSection}`,
+      "Before creating a note inside a folder, verify every segment of the path exists by calling list_folder starting from the top and working down one level at a time — e.g. for 'A/B/C/note.md' call list_folder on 'A', then 'A/B', then 'A/B/C'. Use the actual names returned by each call for the next call. Never assume spelling or casing at any level; always confirm before proceeding.",
       "Use the remember tool when the user explicitly asks you to remember something — it will be saved to KNOWLEDGE.md and available in all future conversations.",
       "Ask for the smallest necessary change. Destructive actions may be denied by plugin settings or user confirmation."
     ];
@@ -929,7 +973,7 @@ class VaultSearch {
 
       if (score > 0) {
         if (containsSecrets(content)) {
-          console.warn(`[Security] Excluded from context (contains secrets): ${file.path}`);
+          // skip — secret content is never sent to the AI
         } else {
           scored.push({
             path: file.path,
@@ -947,7 +991,10 @@ class VaultSearch {
 }
 
 class VaultTools {
-  constructor(private readonly plugin: VaultAiChatPlugin) {}
+  constructor(
+    private readonly plugin: VaultAiChatPlugin,
+    private readonly confirmFn: (message: string) => Promise<boolean>
+  ) {}
 
   async run(call: ToolCall): Promise<string> {
     let args: Record<string, unknown>;
@@ -985,7 +1032,6 @@ class VaultTools {
     const file = this.getFile(path);
     const content = await this.plugin.app.vault.cachedRead(file);
     if (containsSecrets(content)) {
-      console.warn(`[Security] read_note blocked (contains secrets): ${file.path}`);
       return `Note at ${file.path} was not returned because it appears to contain sensitive information.`;
     }
     return truncate(content, 12000);
@@ -993,6 +1039,10 @@ class VaultTools {
 
   private async createNote(path: string, content: string) {
     const safePath = this.safePath(path);
+    const parentPath = safePath.split("/").slice(0, -1).join("/");
+    if (parentPath && !(this.plugin.app.vault.getAbstractFileByPath(parentPath) instanceof TFolder)) {
+      return `Folder "${parentPath}" does not exist. Use list_folder to verify the correct path before trying again.`;
+    }
     await this.confirm(`Create note at ${safePath}?`);
     const existing = this.plugin.app.vault.getAbstractFileByPath(safePath);
     if (existing) return `Cannot create ${safePath}; it already exists.`;
@@ -1073,63 +1123,10 @@ class VaultTools {
 
   private async confirm(message: string) {
     if (!this.plugin.settings.requireConfirmation) return;
-
-    const approved = await new Promise<boolean>((resolve) => {
-      new ConfirmationModal(this.plugin.app, message, resolve).open();
-    });
-
+    const approved = await this.confirmFn(message);
     if (!approved) {
       throw new Error("User denied the requested vault action.");
     }
-  }
-}
-
-class ConfirmationModal extends Modal {
-  private completed = false;
-
-  constructor(
-    app: App,
-    private readonly message: string,
-    private readonly resolve: (approved: boolean) => void
-  ) {
-    super(app);
-  }
-
-  onOpen() {
-    this.contentEl.empty();
-    this.contentEl.createEl("h2", { text: "Confirm vault action" });
-    this.contentEl.createEl("p", { text: this.message });
-
-    const buttons = this.contentEl.createDiv();
-    new Setting(buttons)
-      .addButton((button) => {
-        button
-          .setButtonText("Cancel")
-          .onClick(() => {
-            this.complete(false);
-            this.close();
-          });
-      })
-      .addButton((button) => {
-        button
-          .setButtonText("Approve")
-          .setCta()
-          .onClick(() => {
-            this.complete(true);
-            this.close();
-          });
-      });
-  }
-
-  onClose() {
-    this.complete(false);
-    this.contentEl.empty();
-  }
-
-  private complete(approved: boolean) {
-    if (this.completed) return;
-    this.completed = true;
-    this.resolve(approved);
   }
 }
 
@@ -1158,7 +1155,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Base URL")
-      .setDesc("Openai-compatible API base URL.")
+      .setDesc("OpenAI-compatible API base URL.")
       .addText((text) =>
         text
               .setPlaceholder("HTTPS://api.OpenAI.com/v1")
@@ -1173,7 +1170,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setName("Model")
       .addText((text) =>
         text
-              .setPlaceholder("Gpt-4o-mini")
+              .setPlaceholder("GPT-4o-mini")
           .setValue(this.plugin.settings.model)
           .onChange(async (value) => {
             this.plugin.settings.model = value.trim() || DEFAULT_SETTINGS.model;
@@ -1200,7 +1197,7 @@ class VaultAiChatSettingTab extends PluginSettingTab {
       .setDesc("Optional folder path that AI file actions must stay inside.")
       .addText((text) =>
         text
-              .setPlaceholder("Projects/AI notes")
+              .setPlaceholder("/ (vault root)")
           .setValue(this.plugin.settings.allowedRoot)
           .onChange(async (value) => {
             this.plugin.settings.allowedRoot = normalizePath(value.trim());
@@ -1232,7 +1229,57 @@ class VaultAiChatSettingTab extends PluginSettingTab {
           })
       );
 
-     
+    let soundPathInput!: HTMLInputElement;
+    new Setting(containerEl)
+      .setName("Completion sound")
+      .setDesc("Audio file to play when the AI finishes responding. Leave blank to disable.")
+      .addText((text) => {
+        soundPathInput = text.inputEl;
+        text.inputEl.readOnly = true;
+        text
+          .setPlaceholder("No file selected")
+          .setValue(this.plugin.settings.completionSoundPath);
+      })
+      .addButton((btn) =>
+        btn.setButtonText("Browse").onClick(() => {
+          new AudioFileSuggestModal(this.app, async (file) => {
+            this.plugin.settings.completionSoundPath = file.path;
+            soundPathInput.value = file.path;
+            await this.plugin.saveSettings();
+          }).open();
+        })
+      )
+      .addButton((btn) =>
+        btn.setButtonText("Clear").onClick(async () => {
+          this.plugin.settings.completionSoundPath = "";
+          soundPathInput.value = "";
+          await this.plugin.saveSettings();
+        })
+      )
+      .addButton((btn) =>
+        btn.setButtonText("Test").onClick(() => {
+          if (!this.plugin.settings.completionSoundPath) {
+            new Notice("No completion sound file selected.");
+            return;
+          }
+          this.plugin.playCompletionSound();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Completion sound volume")
+      .setDesc("Volume for the completion sound (0–100%).")
+      .addSlider((slider) =>
+        slider
+          .setLimits(0, 100, 1)
+          .setValue(Math.round(this.plugin.settings.completionSoundVolume * 100))
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.completionSoundVolume = value / 100;
+            await this.plugin.saveSettings();
+          })
+      );
+
     new Setting(containerEl)
       .setName("Mcp servers")
       .setDesc("Configure mcp servers to expose additional tools to the AI. Servers are reloaded automatically when you add or remove an entry.")
@@ -1420,6 +1467,29 @@ class McpServerModal extends Modal {
   }
 }
 
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "ogg", "m4a", "webm", "flac", "aif", "aiff"]);
+
+class AudioFileSuggestModal extends FuzzySuggestModal<TFile> {
+  constructor(app: App, private readonly onSelect: (file: TFile) => Promise<void>) {
+    super(app);
+    this.setPlaceholder("Type to search for an audio file…");
+  }
+
+  getItems(): TFile[] {
+    return this.app.vault.getFiles().filter((f) =>
+      AUDIO_EXTENSIONS.has(f.extension.toLowerCase())
+    );
+  }
+
+  getItemText(file: TFile): string {
+    return file.path;
+  }
+
+  onChooseItem(file: TFile): void {
+    void this.onSelect(file);
+  }
+}
+
 const IDENTITY_PATH = "IDENTITY.md";
 const KNOWLEDGE_PATH = "KNOWLEDGE.md";
 
@@ -1503,13 +1573,6 @@ class StdioMcpClient implements McpClient {
       '/opt/homebrew/sbin'
     ].filter(Boolean).join(':');
 
-    const maskedEnv = Object.fromEntries(
-      Object.entries(env).map(([k, v]) => [k, v.length > 4 ? `${v.slice(0, 4)}****` : "****"])
-    );
-    console.debug(`[MCP "${this.config.name}"] spawn: ${[command, ...args].join(" ")}`);
-    console.debug(`[MCP "${this.config.name}"] PATH: ${augmentedPath}`);
-    if (Object.keys(maskedEnv).length) console.debug(`[MCP "${this.config.name}"] env:`, maskedEnv);
-
     this.childProcess = spawn(command, args, {
       env: { ...process.env, PATH: augmentedPath, ...env },
       stdio: ["pipe", "pipe", "pipe"]
@@ -1519,12 +1582,9 @@ class StdioMcpClient implements McpClient {
     this.childProcess.stdout?.on("data", (data: Buffer) => this.handleData(data));
     this.childProcess.stderr?.on("data", (data: Buffer) => { stderrBuf += data.toString(); });
     this.childProcess.on("error", (err) => {
-      console.debug(`[MCP "${this.config.name}"] error:`, err.message);
       this.rejectAll(err);
     });
     this.childProcess.on("exit", (code) => {
-      console.debug(`[MCP "${this.config.name}"] exited with code ${code ?? "null"}`);
-      if (stderrBuf.trim()) console.debug(`[MCP "${this.config.name}"] stderr: ${stderrBuf.trim()}`);
       const detail = stderrBuf.trim() ? `: ${stderrBuf.slice(0, 300).trim()}` : "";
       this.rejectAll(new Error(`MCP server "${this.config.name}" exited with code ${code ?? "null"}${detail}`));
     });
@@ -1656,7 +1716,6 @@ class McpManager {
         this.clients.set(config.name, client);
         for (const tool of tools) {
           if (this.toolRegistry.has(tool.name)) {
-            console.warn(`[MCP] Tool name conflict: "${tool.name}" already registered by "${this.toolRegistry.get(tool.name)}"; "${config.name}" will take over.`);
             const idx = this.toolDefs.findIndex((d) => d.function.name === tool.name);
             if (idx !== -1) this.toolDefs[idx] = mcpToolToDefinition(tool);
           } else {
@@ -1664,7 +1723,6 @@ class McpManager {
           }
           this.toolRegistry.set(tool.name, config.name);
         }
-        console.debug(`[MCP "${config.name}"] ready — ${tools.length} tool(s): ${tools.map((t) => t.name).join(", ")}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         new Notice(`MCP server "${config.name}" failed to start: ${msg}`);
